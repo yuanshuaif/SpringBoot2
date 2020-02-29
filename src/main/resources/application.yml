@@ -1,0 +1,26 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL5InnoDBDialect
+  #  rest 基础根路径配置
+  data:
+    rest:
+      base-path: /lsj
+  mail:
+    host: smtp.163.com
+    username: ustbdingkun@163.com
+    # 授权码 而不是密码  授权码需要在邮箱的设置中去启动
+    password: 712520dk
+    protocol: smtp
+    defaultEncoding: UTF-8
+    properties:
+      mail:
+        smtp:
+          auth: true
+# 默认rediscachemanager的配置
+#  cache:
+#    type: redis
