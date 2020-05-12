@@ -34,9 +34,9 @@ public class JedisConfig {
         host = env.getProperty("spring.redis.host");
         port = env.getProperty("spring.redis.port");
         password = env.getProperty("spring.redis.password");
-        maxActive = env.getProperty("spring.redis.pool.max-active");
-        maxIdle  = env.getProperty("spring.redis.pool.max-idle");
-        maxWait = env.getProperty("spring.redis.pool.max-wait");
+        maxActive = env.getProperty("spring.redis.jedis.pool.max-active");
+        maxIdle  = env.getProperty("spring.redis.jedis.pool.max-idle");
+        maxWait = env.getProperty("spring.redis.jedis.pool.max-wait");
         timeout = env.getProperty("spring.redis.timeout");
     }
 
