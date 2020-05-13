@@ -11,7 +11,7 @@ import org.springframework.scheduling.quartz.SchedulerFactoryBean;
  * Created by yuanshuai on 2019/4/5.
  * 4.将tigger注册到scheduled里
  */
-@Configuration
+//@Configuration
 public class ScheduleConfig {
 
     @Autowired

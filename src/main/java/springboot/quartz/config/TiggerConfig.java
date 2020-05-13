@@ -12,7 +12,7 @@ import springboot.quartz.job.ScheduledTasks;
  * Created by yuanshuai on 2019/4/5.
  * 2/3 得到JobDetail和Tigger
  */
-@Configuration
+//@Configuration
 public class TiggerConfig {
 
     @Autowired
