@@ -2,6 +2,7 @@ package springboot.schedule.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.AsyncConfigurerSupport;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
@@ -16,14 +17,15 @@ import java.util.concurrent.ThreadPoolExecutor;
  */
 @Configuration
 @EnableAsync
-public class AsyncConfig {
+public class AsyncConfig extends AsyncConfigurerSupport {
 
-    private static final int COREPOOLSIZE = 10;
-    private static final int MAXPOOLSIZE = 100;
+    private static final int COREPOOLSIZE = 2;
+    private static final int MAXPOOLSIZE = 5;
     private static final int QUEUECAPACITY = 10;
 
-    @Bean
-    public Executor taskExecutor(){
+    // 异步线程池
+    @Override
+    public Executor getAsyncExecutor(){
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(COREPOOLSIZE);
         executor.setMaxPoolSize(MAXPOOLSIZE);
@@ -35,6 +37,7 @@ public class AsyncConfig {
                 // TODO Auto-generated method stub
             }
         });
+        executor.initialize();
         return executor;
     }
 }
