@@ -1,4 +1,4 @@
-package springboot.rpc;
+package springboot.rpc.runnable;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import springboot.rpc.service.UserService;
