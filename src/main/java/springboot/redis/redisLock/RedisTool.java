@@ -1,9 +1,12 @@
 package springboot.redis.redisLock;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import redis.clients.jedis.Jedis;
 
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Created by 10326 on 2019/5/11.
@@ -23,6 +26,12 @@ public class RedisTool {
     private static final String SET_WITH_EXPIRE_TIME = "PX";
     private static final Long RELEASE_SUCCESS = 1L;
 
+    @Autowired
+    private Jedis jedis;
+
+    // 可重入锁，每个线程重入计数器
+    private static ThreadLocal<Map<String, Integer>> local = ThreadLocal.withInitial(HashMap::new);
+
 //    private static ThreadLocal<Long> localExpire = new ThreadLocal<Long>();
     /**
      * 尝试获取分布式锁
@@ -32,7 +41,7 @@ public class RedisTool {
      * @param expireTime 超期时间
      * @return 是否获取成功
      */
-    public boolean tryGetDistributedLock(Jedis jedis, String lockKey, String requestId, int expireTime) {
+    public boolean tryGetDistributedLock(Jedis jedis, String lockKey, String requestId, long expireTime) {
         /*
           第一个为key，我们使用key来当锁，因为key是唯一的。
           第二个为value，我们传的是requestId，很多童鞋可能不明白，有key作为锁不就够了吗，为什么还要用到value？
@@ -180,4 +189,51 @@ public class RedisTool {
 
     }
 
+    // 可重入的分布式锁
+    // https://mp.weixin.qq.com/s/bl4OWKUKPFD2VlcdArHBhQ
+    //基于 ThreadLocal 实现方案;基于 Redis Hash 实现方案
+    //可重入锁最大特性就是计数，计算加锁的次数。所以当可重入锁需要在分布式环境实现时，我们也就需要统计加锁次数。
+    // 加锁方法首先判断当前线程是否已经已经拥有该锁，若已经拥有，直接对锁的重入次数加 1。
+    //若还没拥有该锁，则尝试去 Redis 加锁，加锁成功之后，再对重入次数加 1 。
+    public Boolean tryLock(String lockName, String requestId, long leaseTime) {
+        Map<String, Integer> map = local.get();
+        if(map.containsKey(lockName)){
+            map.put(lockName, map.get(lockName) + 1);
+            return true;
+        }else{
+            if(tryGetDistributedLock(jedis, lockName, requestId, leaseTime)){
+                map.put(lockName, 1);
+                return true;
+            }
+        }
+        return false;
+    }
+
+//    释放锁的时首先判断重入次数，若大于 1，则代表该锁是被该线程拥有，所以直接将锁重入次数减 1 即可。
+//    若当前可重入次数小于等于 1，首先移除 Map中锁对应的 key，然后再到 Redis 释放锁。
+    public void unlock(String lockName, String requestId) {
+        Map<String, Integer> map = local.get();
+        if(map != null && map.containsKey(lockName)){
+            if(map.get(lockName) <= 1){
+                map.remove(lockName);
+                Boolean result = releaseDistributedLock(jedis, lockName, requestId);
+                if(!result){
+                    throw new RuntimeException("释放锁失败");
+                }
+            }else{
+                map.put(lockName, map.get(lockName) - 1);
+            }
+        }
+
+    }
+
+//    过期时间问题（该方案致命的问题）
+//    上述加锁的代码可以看到，重入加锁时，仅仅对本地计数加 1 而已。这样可能就会导致一种情况，由于业务执行过长，Redis 已经过期释放锁。
+//    而再次重入加锁时，由于本地还存在数据，认为锁还在被持有，这就不符合实际情况。
+//    如果要在本地增加过期时间，还需要考虑本地与 Redis 过期时间一致性的，代码就会变得很复杂。
+
+//    不同线程/进程可重入问题
+//    狭义上可重入性应该只是对于同一线程的可重入，但是实际业务可能需要不同的应用线程之间可以重入同把锁。
+//    而 ThreadLocal的方案仅仅只能满足同一线程重入，无法解决不同线程/进程之间重入问题。
+//    不同线程/进程重入问题就需要使用下述方案 Redis Hash 方案解决。
 }
