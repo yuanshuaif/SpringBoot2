@@ -236,4 +236,132 @@ public class RedisTool {
 //    狭义上可重入性应该只是对于同一线程的可重入，但是实际业务可能需要不同的应用线程之间可以重入同把锁。
 //    而 ThreadLocal的方案仅仅只能满足同一线程重入，无法解决不同线程/进程之间重入问题。
 //    不同线程/进程重入问题就需要使用下述方案 Redis Hash 方案解决。
+
+
+//    基于 Redis Hash 可重入锁
+//    加锁的 lua 脚本如下：
+//    ---- 1 代表 true
+//    ---- 0 代表 false
+//        if (redis.call('exists', KEYS[1]) == 0) then
+//        redis.call('hincrby', KEYS[1], ARGV[2], 1);
+//        redis.call('pexpire', KEYS[1], ARGV[1]);
+//        return 1;
+//        end ;
+//    if (redis.call('hexists', KEYS[1], ARGV[2]) == 1) then
+//        redis.call('hincrby', KEYS[1], ARGV[2], 1);
+//        redis.call('pexpire', KEYS[1], ARGV[1]);
+//        return 1;
+//        end ;
+//    return 0;
+
+//    如果 KEYS:[lock],ARGV[1000,uuid]
+//    不熟悉 lua 语言同学也不要怕，上述逻辑还是比较简单的。
+//    加锁代码首先使用 Redis exists 命令判断当前 lock 这个锁是否存在。
+//    如果锁不存在的话，直接使用 hincrby创建一个键为 lock hash 表，并且为 Hash 表中键为 uuid 初始化为 0，然后再次加 1，最后再设置过期时间。
+//    如果当前锁存在，则使用 hexists判断当前 lock 对应的 hash 表中是否存在  uuid 这个键，如果存在,再次使用 hincrby 加 1，最后再次设置过期时间。
+//    最后如果上述两个逻辑都不符合，直接返回。
+
+//    加锁代码如下:
+
+//    // 初始化代码
+//
+//    String lockLuaScript = IOUtils.toString(ResourceUtils.getURL("classpath:lock.lua").openStream(), Charsets.UTF_8);
+//    lockScript = new DefaultRedisScript<>(lockLuaScript, Boolean.class);
+//
+//    /**
+//     * 可重入锁
+//     *
+//     * @param lockName  锁名字,代表需要争临界资源
+//     * @param request   唯一标识，可以使用 uuid，根据该值判断是否可以重入
+//     * @param leaseTime 锁释放时间
+//     * @param unit      锁释放时间单位
+//     * @return
+//     */
+//    public Boolean tryLock(String lockName, String request, long leaseTime, TimeUnit unit) {
+//        long internalLockLeaseTime = unit.toMillis(leaseTime);
+//        return stringRedisTemplate.execute(lockScript, Lists.newArrayList(lockName), String.valueOf(internalLockLeaseTime), request);
+//    }
+
+
+//    解锁的 Lua 脚本如下：
+//    -- 判断 hash set 可重入 key 的值是否等于 0
+//        -- 如果为 0 代表 该可重入 key 不存在
+//    if (redis.call('hexists', KEYS[1], ARGV[1]) == 0) then
+//        return nil;
+//        end ;
+//    -- 计算当前可重入次数
+//        local counter = redis.call('hincrby', KEYS[1], ARGV[1], -1);
+//    -- 小于等于 0 代表可以解锁
+//    if (counter > 0) then
+//        return 0;
+//    else
+//            redis.call('del', KEYS[1]);
+//        return 1;
+//        end ;
+//    return nil;
+
+//    首先使用 hexists 判断 Redis Hash 表是否存给定的域。
+//    如果 lock 对应 Hash 表不存在，或者 Hash 表不存在 uuid 这个 key，直接返回 nil。
+//    若存在的情况下，代表当前锁被其持有，首先使用 hincrby使可重入次数减 1 ，然后判断计算之后可重入次数，若小于等于 0，则使用 del 删除这把锁。
+
+    // 初始化代码：
+
+
+//    String unlockLuaScript = IOUtils.toString(ResourceUtils.getURL("classpath:unlock.lua").openStream(), Charsets.UTF_8);
+//    unlockScript = new DefaultRedisScript<>(unlockLuaScript, Long.class);
+//
+//    /**
+//     * 解锁
+//     * 若可重入 key 次数大于 1，将可重入 key 次数减 1 <br>
+//     * 解锁 lua 脚本返回含义：<br>
+//     * 1:代表解锁成功 <br>
+//     * 0:代表锁未释放，可重入次数减 1 <br>
+//     * nil：代表其他线程尝试解锁 <br>
+//     * <p>
+//     * 如果使用 DefaultRedisScript<Boolean>，由于 Spring-data-redis eval 类型转化，<br>
+//     * 当 Redis 返回  Nil bulk, 默认将会转化为 false，将会影响解锁语义，所以下述使用：<br>
+//     * DefaultRedisScript<Long>
+//     * <p>
+//     * 具体转化代码请查看：<br>
+//     * JedisScriptReturnConverter<br>
+//     *
+//     * @param lockName 锁名称
+//     * @param request  唯一标识，可以使用 uuid
+//     * @throws IllegalMonitorStateException 解锁之前，请先加锁。若为加锁，解锁将会抛出该错误
+//     */
+//    public void unlock(String lockName, String request) {
+//        Long result = stringRedisTemplate.execute(unlockScript, Lists.newArrayList(lockName), request);
+//        // 如果未返回值，代表其他线程尝试解锁
+//        if (result == null) {
+//            throw new IllegalMonitorStateException("attempt to unlock lock, not locked by lockName:+" + lockName + " with request: "
+//                    + request);
+//        }
+//    }
+
+ /*   解锁代码执行方式与加锁类似，只不过解锁的执行结果返回类型使用 Long。这里之所以没有跟加锁一样使用 Boolean ,这是因为解锁 lua 脚本中，三个返回值含义如下：
+            1 代表解锁成功，锁被释放
+0 代表可重入次数被减 1
+            null 代表其他线程尝试解锁，解锁失败
+    如果返回值使用 Boolean，Spring-data-redis 进行类型转换时将会把 null 转为 false，这就会影响我们逻辑判断，所以返回类型只好使用 Long。
+
+*/
+    /*spring-data-redis 低版本问题
+    如果 Spring-Boot 使用 Jedis 作为连接客户端,并且使用Redis  Cluster 集群模式，需要使用  2.1.9 以上版本的spring-boot-starter-data-redis,不然执行过程中将会抛出：
+    org.springframework.dao.InvalidDataAccessApiUsageException: EvalSha is not supported in cluster environment.*/
+
+
+//    可重入分布式锁关键在于对于锁重入的计数，这篇文章主要给出两种解决方案，一种基于 ThreadLocal 实现方案，这种方案实现简单，运行也比较高效。但是若要处理锁过期的问题，代码实现就比较复杂。
+//    另外一种采用 Redis Hash 数据结构实现方案，解决了 ThreadLocal 的缺陷，但是代码实现难度稍大，需要熟悉 Lua 脚本，以及Redis 一些命令。另外使用 spring-data-redis 等操作 Redis 时不经意间就会遇到各种问题。
+
+
+//    下面主要我们来讲下 Lua 数据转化 Redis 的规则中几条比较容易踩坑：
+//    1、Lua number 与 Redis 数据类型转换
+//    Lua 中 number 类型是一个双精度的浮点数，但是 Redis 只支持整数类型，所以这个转化过程将会丢弃小数位。
+
+//    2、Lua boolean 与 Redis 类型转换
+//    这个转化比较容易踩坑，Redis 中是不存在 boolean 类型，所以当Lua 中 true 将会转为 Redis 整数 1。而 Lua 中 false 并不是转化整数，而是转化 null 返回给客户端。
+
+//    3、Lua nil 与 Redis 类型转换
+//    Lua nil 可以当做是一个空值，可以等同于 Java 中的 null。在 Lua 中如果 nil 出现在条件表达式，将会当做 false 处理。
+//    所以 Lua nil 也将会 null 返回给客户端。
 }
